@@ -15,7 +15,7 @@ import java.util.Locale;
 
 public class BenchmarkResultStore {
 
-    private static final String RAW_HEADER = "runId,startedAt,endedAt,readerType,targetRows,indexMode,repetition,durationNs,durationMs,readCount,writeCount,commitCount,checksum,exitStatus,peakOldGenBytes,oldGenMeasurement,gcLogPath,countValid\n";
+    private static final String RAW_HEADER = "runId,startedAt,endedAt,readerType,targetRows,indexMode,indexVerified,indexDefinition,repetition,durationNs,durationMs,readCount,writeCount,commitCount,checksum,exitStatus,peakOldGenBytes,oldGenMeasurement,gcLogPath,countValid\n";
     private static final String SUMMARY_HEADER = "readerType,targetRows,indexMode,successfulRuns,meanDurationMs,minDurationMs,maxDurationMs,stddevDurationMs,meanPeakOldGenBytes,maxPeakOldGenBytes\n";
 
     private final Path resultsDirectory;
@@ -72,6 +72,7 @@ public class BenchmarkResultStore {
         String row = String.join(",",
                 result.runId(), result.startedAt().toString(), result.endedAt().toString(),
                 result.readerType().name(), Long.toString(result.targetRows()), result.indexMode().name(),
+                Boolean.toString(result.indexVerified()), quote(result.indexDefinition()),
                 Integer.toString(result.repetition()), Long.toString(result.durationNs()),
                 format(result.durationMs()), Long.toString(result.readCount()), Long.toString(result.writeCount()),
                 Long.toString(result.commitCount()), Long.toString(result.checksum()), result.exitStatus(), peak,

@@ -24,6 +24,13 @@
 - `G1 Old Gen` MXBean 50ms sampler와 측정 불가 N/A 처리 구현
 - run별 JSON, raw CSV와 성공 run summary CSV 저장 구현
 - 512MB 고정 heap/G1GC/unified GC log를 사용하는 PowerShell/Bash runner 구현
+- 고정 보조 인덱스 `idx_settlement_item_status_id (status, id)` ON/OFF 자동화 구현
+- 인덱스 변경 뒤 `ANALYZE settlement_item` 수행과 PostgreSQL 카탈로그 정의 검증 구현
+- benchmark Job의 인덱스 준비를 Step wall-clock 측정 구간 밖에 연결
+- 앞·중간·마지막 페이지의 OFFSET과 대응 Keyset `lastId` 계산 구현
+- 실제 SQL, 바인딩, PostgreSQL 원본 EXPLAIN JSON과 핵심 plan 지표 저장 구현
+- 로컬 `batch_benchmark` DB에서만 인덱스 DDL과 EXPLAIN을 허용하는 보호 장치 구현
+- PowerShell/Bash EXPLAIN 수집 진입점 구현
 
 ## 2. 실제 실행한 테스트와 결과
 
@@ -101,6 +108,40 @@
 - smoke duration과 Old Gen 0 bytes는 도구 작동 확인값이며 성능 비교 결과가 아님
 - 검증 산출물은 `build/stage3-check/`에 두어 정식 `results/`와 분리함
 
+### 4단계 인덱스·EXPLAIN 검증
+
+최종 실행 명령:
+
+```powershell
+.\gradlew.bat --no-daemon test
+```
+
+최종 결과: `BUILD SUCCESSFUL` (2026-09-05), 48초. 총 19개, 실패 0개, 오류 0개, 건너뜀 0개.
+
+- 기존 15개 테스트 재통과
+- `LocalExperimentDatabaseGuardTest`: 2개 통과
+- `IndexAndExplainIntegrationTest`: 2개 통과
+- Testcontainers PostgreSQL 16.15에서 ON 인덱스의 이름, `(status, id)` 순서, valid/ready, non-unique와 실제 정의 검증
+- OFF 전환 뒤 해당 보조 인덱스가 카탈로그에서 사라지는지 검증
+- `ANALYZE` 뒤 3,301개 전체 행에 대응하는 `pg_class.reltuples` 갱신 검증
+- READY 3,001건에서 인덱스 OFF/ON 각각 OFFSET/Keyset × FIRST/MIDDLE/LAST, 총 12개 EXPLAIN JSON 생성 검증
+- 중간 `OFFSET 1000`과 `lastId 1000`, 마지막 `OFFSET 3000`과 `lastId 3000`의 대응 검증
+- SQL, 바인딩, 원본 JSON, planning/execution time, plan node 지표 추출 검증
+- 원격 호스트 또는 다른 DB 이름의 JDBC URL 거부 검증
+
+### 4단계 패키징 JAR과 Compose 실행
+
+- Boot JAR 빌드 성공
+- 별도 Compose project와 임시 포트 `65434`에서 PostgreSQL 16.15 healthcheck 성공
+- 애플리케이션으로 Flyway V1~V4와 smoke Job 실행 후 READY 3,001건의 결정적 seed 적재
+- 패키징된 JAR에서 OFF/ON EXPLAIN 수집 성공, JSON 12개 생성
+- ON 중간 페이지에서 `pageOffset=1000`, `correspondingLastId=1000`, plan node 2개 추출 확인
+- ON benchmark smoke 실행 `COMPLETED`, read/write 3,001, commit 4, checksum 306306068, `indexVerified=true`
+- 실제 카탈로그 정의: `CREATE INDEX idx_settlement_item_status_id ON public.settlement_item USING btree (status, id)`
+- 로그에서 ERROR/Exception/FAILED 없음
+- 검증 후 임시 컨테이너, network, volume 정리 완료
+- 검증 산출물은 `build/stage4-check/`에 보관하며 성능 비교 결과로 사용하지 않음
+
 ## 3. 현재 정상 동작하는 기능
 
 - Gradle Wrapper를 통한 빌드와 테스트
@@ -114,13 +155,17 @@
 - Reader 경계값 및 실제 PostgreSQL 정합성 자동 검증
 - 파라미터 기반 단일 benchmark Job과 실행 유효성 판정
 - Old Gen sampler, GC logging runner, 재집계 가능한 JSON/CSV 저장
+- benchmark 실행 전 보조 인덱스 ON/OFF, ANALYZE와 실제 카탈로그 상태 검증
+- benchmark raw JSON/CSV의 `indexVerified`, `indexDefinition` 기록
+- 동일 페이지 위치의 OFFSET/Keyset SQL과 바인딩 및 실행계획 수집
+- 원본 EXPLAIN JSON과 scan/rows/loops/buffer/sort/time 평탄화 지표 저장
+- 로컬 실험 DB로 제한된 PowerShell/Bash EXPLAIN 실행
 
 ## 4. 미완료 작업과 측정 대기 항목
 
-- 4단계 보조 인덱스 ON/OFF와 실제 SQL/EXPLAIN 수집
 - 5단계 100k/500k/1m 전체 36회 측정과 결과 집계
 - 6단계 아키텍처·방법론·결과 문서와 실제 측정값 기반 블로그 초안
-- `results/` 산출물은 아직 생성하지 않음
+- 정식 `results/` 산출물은 아직 생성하지 않음
 
 ## 5. 발생한 오류와 확인된 원인
 
@@ -130,16 +175,17 @@
 - 최초 재시작 테스트에서 실패 플래그를 첫 chunk가 먼저 소비해 의도한 두 번째 chunk 실패가 발생하지 않았다. ID 1001이 포함된 chunk에서만 atomic flag를 전환하도록 테스트를 수정했고, `FAILED → 동일 JobInstance 재시작 → COMPLETED`를 확인했다.
 - benchmark smoke 기동 시 Step-scoped Reader bean의 반환 타입이 인터페이스라 annotation listener 탐색 경고가 출력됐다. Reader에 annotation listener가 없고 ItemStream lifecycle과 결과에는 영향이 없음을 확인했다.
 - PowerShell runner parser 검증은 통과했다. 현재 Windows의 WSL/Bash가 경로 mount와 `/bin/bash` 실행에 실패해 Bash runner의 `bash -n` 검증은 수행하지 못했다. 별도 설치나 관리자 권한 변경은 하지 않았다.
+- 첫 4단계 전체 테스트에서 Jackson 라이브러리는 있었지만 웹 starter가 없어 Spring 관리 `ObjectMapper` bean이 생성되지 않았고, 3개 통합 테스트 context의 10개 테스트가 시작 전에 실패했다. EXPLAIN 전용 mapper를 명시적으로 구성한 뒤 전체 19개 테스트가 통과했다.
 
 ## 6. 다음 작업에서 바로 시작할 내용
 
-사용자가 `계속 진행해`라고 요청하면 문서와 이 진행 기록을 다시 읽고 4단계만 수행한다.
+사용자가 `계속 진행해`라고 요청하면 문서와 이 진행 기록을 다시 읽고 5단계만 수행한다. 전체 측정은 사용량과 실행시간이 큰 단계이므로 AGENTS.md에 따라 필요하면 `100k → 500k → 1m` 하위 단계로 나눈다.
 
-1. `(status, id)` 보조 인덱스 ON/OFF 자동화와 카탈로그 상태 검증
-2. 인덱스 변경 뒤 `ANALYZE settlement_item` 수행
-3. 앞·중간·뒤 페이지의 실제 SQL과 바인딩 값 기록
-4. OFFSET/Keyset의 `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` 수집
-5. scan, rows, loops, buffers, sort와 planning/execution time 추출 검증
+1. 실제 환경과 Docker 자원 상태 재확인 및 결과 디렉터리 초기 조건 기록
+2. 명시적 warm-up과 교차 실행 순서를 정해 기록
+3. 100k/500k/1m × OFFSET/Keyset × index OFF/ON × 3회, 총 36개 run 실행
+4. 실패 run 제외, 평균·최소·최대·표준편차와 규모 증가/Reader 비율 계산
+5. run별 GC 로그, Old Gen peak, raw 결과와 환경 정보를 연결해 보존
 
 ## 7. 실행 및 재현 명령어
 
@@ -151,6 +197,8 @@ docker compose up -d --wait postgres
 .\gradlew.bat bootRun --args="--spring.batch.job.name=keysetReaderJob run.id=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
 .\gradlew.bat bootJar
 .\scripts\run-benchmark.ps1 -ReaderType OFFSET -TargetRows 100000 -IndexMode OFF -Repetition 1
+.\scripts\collect-explain.ps1 -TargetRows 100000 -IndexMode OFF
+.\scripts\collect-explain.ps1 -TargetRows 100000 -IndexMode ON
 docker compose down
 ```
 
@@ -182,10 +230,14 @@ docker compose down
 - `src/main/java/dev/benchmark/batchreader/benchmark/`의 benchmark Job, listener, sampler와 result store
 - `scripts/run-benchmark.ps1`, `scripts/run-benchmark.sh`
 - `BenchmarkResultStoreTest`, `OldGenSamplerTest`
+- `src/main/java/dev/benchmark/batchreader/experiment/`의 로컬 DB guard, 인덱스 manager와 EXPLAIN collector
+- `BenchmarkIndexPreparationListener`와 인덱스 검증 필드가 추가된 benchmark 결과 모델
+- `scripts/collect-explain.ps1`, `scripts/collect-explain.sh`
+- `LocalExperimentDatabaseGuardTest`, `IndexAndExplainIntegrationTest`
 
 ## 9. 생성된 측정 결과 파일 경로
 
-정식 결과는 없음. 3단계 smoke 검증 파일은 `build/stage3-check/` 아래 생성했으며 Git에서 제외된다. 전체 측정 전까지 `results/`에는 placeholder만 있다.
+정식 결과는 없음. 3단계 smoke 검증 파일은 `build/stage3-check/`, 4단계 인덱스·EXPLAIN 검증 파일은 `build/stage4-check/` 아래 생성했으며 Git에서 제외된다. 전체 측정 전까지 `results/`에는 placeholder만 있다.
 
 ## 검증 환경
 

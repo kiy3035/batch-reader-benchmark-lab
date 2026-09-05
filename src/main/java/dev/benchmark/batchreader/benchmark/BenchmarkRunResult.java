@@ -9,6 +9,8 @@ public record BenchmarkRunResult(
         ReaderType readerType,
         long targetRows,
         IndexMode indexMode,
+        boolean indexVerified,
+        String indexDefinition,
         int repetition,
         long durationNs,
         double durationMs,

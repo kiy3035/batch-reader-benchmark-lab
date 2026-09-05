@@ -45,9 +45,13 @@ public class BenchmarkMetricsListener implements StepExecutionListener {
                 && stepExecution.getWriteCount() == parameters.targetRows();
         String exitStatus = countValid ? stepExecution.getExitStatus().getExitCode() : "COUNT_MISMATCH";
         Long peak = sampler.peakBytes().isPresent() ? sampler.peakBytes().getAsLong() : null;
+        var jobContext = stepExecution.getJobExecution().getExecutionContext();
+        boolean indexVerified = jobContext.get(BenchmarkIndexPreparationListener.VERIFIED_KEY, Boolean.class);
+        String indexDefinition = jobContext.getString(BenchmarkIndexPreparationListener.DEFINITION_KEY);
         BenchmarkRunResult result = new BenchmarkRunResult(
                 parameters.runId(), startedAt, Instant.now(), parameters.readerType(), parameters.targetRows(),
-                parameters.indexMode(), parameters.repetition(), durationNs, durationNs / 1_000_000.0,
+                parameters.indexMode(), indexVerified, indexDefinition, parameters.repetition(),
+                durationNs, durationNs / 1_000_000.0,
                 stepExecution.getReadCount(), stepExecution.getWriteCount(), stepExecution.getCommitCount(),
                 writer.getChecksum(), exitStatus, peak, sampler.measurementStatus(),
                 parameters.gcLogPath(), countValid);

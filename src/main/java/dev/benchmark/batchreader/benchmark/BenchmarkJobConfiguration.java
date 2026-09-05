@@ -8,6 +8,7 @@ import dev.benchmark.batchreader.reader.JpaKeysetPageSource;
 import dev.benchmark.batchreader.reader.KeysetJpaItemReader;
 import dev.benchmark.batchreader.reader.OffsetReaderFactory;
 import dev.benchmark.batchreader.reader.ReaderConstants;
+import dev.benchmark.batchreader.experiment.ExperimentIndexManager;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceContext;
@@ -35,8 +36,18 @@ public class BenchmarkJobConfiguration {
 
     /** 파라미터로 Reader를 선택하는 단일 benchmark Job을 만든다. */
     @Bean
-    Job benchmarkJob(JobRepository jobRepository, Step benchmarkStep) {
-        return new JobBuilder("benchmarkJob", jobRepository).start(benchmarkStep).build();
+    Job benchmarkJob(JobRepository jobRepository, Step benchmarkStep,
+                     BenchmarkIndexPreparationListener indexPreparationListener) {
+        return new JobBuilder("benchmarkJob", jobRepository)
+                .listener(indexPreparationListener)
+                .start(benchmarkStep)
+                .build();
+    }
+
+    /** Step 측정 전에 인덱스 모드를 실제 DB에 적용하는 Job listener를 만든다. */
+    @Bean
+    BenchmarkIndexPreparationListener benchmarkIndexPreparationListener(ExperimentIndexManager indexManager) {
+        return new BenchmarkIndexPreparationListener(indexManager);
     }
 
     /** 동일 chunk 크기와 공통 처리 흐름에 측정 listener를 붙인 Step을 만든다. */
@@ -95,7 +106,7 @@ public class BenchmarkJobConfiguration {
             @Value("#{jobParameters['gcLogPath'] ?: ''}") String gcLogPath,
             @Value("${benchmark.old-gen-sample-interval-ms:50}") long intervalMillis) {
         BenchmarkRunResult parameters = new BenchmarkRunResult(runId, Instant.EPOCH, Instant.EPOCH,
-                ReaderType.valueOf(readerType), targetRows, IndexMode.valueOf(indexMode), repetition.intValue(),
+                ReaderType.valueOf(readerType), targetRows, IndexMode.valueOf(indexMode), false, "", repetition.intValue(),
                 0L, 0.0, 0L, 0L, 0L, 0L, "", null, "", gcLogPath, false);
         return new BenchmarkMetricsListener(parameters, writer, resultStore, intervalMillis);
     }
