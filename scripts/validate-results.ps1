@@ -6,6 +6,19 @@ $ErrorActionPreference = "Stop"
 $OutputEncoding = [System.Text.UTF8Encoding]::new()
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $resultRoot = Join-Path $repositoryRoot $ResultsDirectory
+$invariantCulture = [System.Globalization.CultureInfo]::InvariantCulture
+
+# CSV 숫자를 로케일과 무관하게 double로 변환한다.
+function Convert-InvariantDouble([string]$value) {
+    return [double]::Parse($value, $invariantCulture)
+}
+
+# summary 반올림 오차 범위 안에서 실제값과 재계산값이 같은지 확인한다.
+function Assert-Close([string]$name, [double]$actual, [double]$expected) {
+    if ([Math]::Abs($actual - $expected) -gt 0.001) {
+        throw "$name mismatch: actual=$actual expected=$expected"
+    }
+}
 $runFiles = @(Get-ChildItem -LiteralPath (Join-Path $resultRoot "runs") -Filter "*.json")
 if ($runFiles.Count -ne 36) {
     throw "Expected 36 run JSON files, found $($runFiles.Count)."
@@ -73,6 +86,50 @@ if (@($summaryRows | Where-Object { $_.targetRows -eq "500000" -and -not $_.grow
     throw "Summary comparison ratios are incomplete."
 }
 
+# run JSON에서 통계를 독립 재계산해 summary CSV와 대조한다.
+$meanByGroup = @{}
+foreach ($group in $groups) {
+    $meanByGroup[$group.Name] = ($group.Group.durationMs | Measure-Object -Average).Average
+}
+foreach ($summary in $summaryRows) {
+    $key = "$($summary.readerType)|$($summary.targetRows)|$($summary.indexMode)"
+    $groupRuns = @($runs | Where-Object {
+        $_.readerType -eq $summary.readerType -and $_.targetRows -eq [long]$summary.targetRows `
+            -and $_.indexMode -eq $summary.indexMode
+    })
+    $durationStatistics = $groupRuns.durationMs | Measure-Object -Average -Minimum -Maximum
+    $mean = [double]$durationStatistics.Average
+    $variance = ($groupRuns | ForEach-Object { [Math]::Pow([double]$_.durationMs - $mean, 2) } `
+        | Measure-Object -Average).Average
+    Assert-Close "$key meanDurationMs" (Convert-InvariantDouble $summary.meanDurationMs) $mean
+    Assert-Close "$key meanDurationSeconds" (Convert-InvariantDouble $summary.meanDurationSeconds) ($mean / 1000.0)
+    Assert-Close "$key minDurationMs" (Convert-InvariantDouble $summary.minDurationMs) $durationStatistics.Minimum
+    Assert-Close "$key maxDurationMs" (Convert-InvariantDouble $summary.maxDurationMs) $durationStatistics.Maximum
+    Assert-Close "$key stddevDurationMs" (Convert-InvariantDouble $summary.stddevDurationMs) ([Math]::Sqrt($variance))
+
+    $targetRows = [long]$summary.targetRows
+    if ($targetRows -gt 100000) {
+        $baselineKey = "$($summary.readerType)|100000|$($summary.indexMode)"
+        Assert-Close "$key growthVs100k" (Convert-InvariantDouble $summary.growthVs100k) `
+            ($mean / [double]$meanByGroup[$baselineKey])
+    }
+    if ($targetRows -gt 500000) {
+        $baselineKey = "$($summary.readerType)|500000|$($summary.indexMode)"
+        Assert-Close "$key growthVs500k" (Convert-InvariantDouble $summary.growthVs500k) `
+            ($mean / [double]$meanByGroup[$baselineKey])
+    }
+    $offsetKey = "OFFSET|$targetRows|$($summary.indexMode)"
+    $keysetKey = "KEYSET|$targetRows|$($summary.indexMode)"
+    Assert-Close "$key offsetToKeysetRatio" (Convert-InvariantDouble $summary.offsetToKeysetRatio) `
+        ([double]$meanByGroup[$offsetKey] / [double]$meanByGroup[$keysetKey])
+
+    $peaks = $groupRuns.peakOldGenBytes | Measure-Object -Average -Maximum
+    Assert-Close "$key meanPeakOldGenBytes" (Convert-InvariantDouble $summary.meanPeakOldGenBytes) $peaks.Average
+    if ([long]$summary.maxPeakOldGenBytes -ne [long]$peaks.Maximum) {
+        throw "$key maxPeakOldGenBytes mismatch."
+    }
+}
+
 $validation = [ordered]@{
     validatedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
     valid = $true
@@ -84,6 +141,7 @@ $validation = [ordered]@{
     explainFiles = $explainFiles.Count
     gcLogs = $gcFiles.Count
     executionOrderComplete = $true
+    summaryRecalculated = $true
     checksumsByTargetRows = $checksums
 }
 $validation | ConvertTo-Json -Depth 5 | Set-Content `

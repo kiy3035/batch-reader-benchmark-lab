@@ -1,6 +1,6 @@
 # Batch Reader Benchmark Lab
 
-Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **4단계 인덱스·EXPLAIN 수집 도구까지 완료**되어 있으며 전체 성능 실험은 아직 실행하지 않았다.
+Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **5단계 전체 측정까지 완료**되어 있으며 36개 공식 run과 원본 GC·EXPLAIN 자료를 보존한다.
 
 ## 현재 구성
 
@@ -102,7 +102,7 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 ./scripts/seed-scale.sh 100000
 ```
 
-스크립트는 100,000 / 500,000 / 1,000,000만 허용하도록 준비됐다. 아직 전체 규모 seed와 성능 실험은 실행하지 않았다.
+스크립트는 100,000 / 500,000 / 1,000,000만 허용하며, 공식 측정에서는 각 규모마다 같은 함수로 snapshot을 준비했다.
 
 ## 단일 benchmark run
 
@@ -123,7 +123,7 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 - `results/summary.csv`: 평균·최소·최대·표준편차, 규모 증가 배율, Reader 비율과 Old Gen 요약
 - `results/gc/<run-id>.log`: JVM unified GC 원본 로그
 
-`targetRows`와 실제 read/write 수가 다르면 `countValid=false`로 기록되며 summary에서 제외된다. 전체 scale 증가 배율과 Reader 간 비율은 5단계 전체 matrix 결과가 존재할 때 계산한다.
+`targetRows`와 실제 read/write 수가 다르면 `countValid=false`로 기록되며 summary에서 제외된다. 전체 scale 증가 배율과 Reader 간 비율은 공식 36개 run에서 계산됐다.
 
 ## 인덱스와 EXPLAIN 수집
 
@@ -190,6 +190,18 @@ EXPLAIN 실행시간은 Reader Step 시간과 별도 산출물에 기록하며 b
 - `results/execution-order.csv`: 36개 run의 실제 실행 순서
 - `results/validation.json`: 산출물 수, 실행 순서와 scale별 checksum 검증 결과
 
+## 5단계 공식 측정 결과
+
+2026-09-05에 측정 소스 커밋 `26e9f85761583affa1ac963ff1f83dfd316d05af`로 전체 matrix를 실행했다. 36개 run이 모두 `COMPLETED`였고, 각 조건의 3회 측정이 유효했다. `validate-results.ps1`은 원본 run JSON에서 summary 통계를 독립 재계산해 다음 항목을 확인했다.
+
+- 측정 run 36개, 요약 그룹 12개, 그룹별 성공 run 3개
+- GC 로그 36개와 조건별 EXPLAIN JSON 36개
+- 모든 run의 read/write 수가 목표 건수와 일치하고 인덱스 상태 검증 성공
+- scale별 두 Reader checksum 일치: 100k `202165400000`, 500k `4121634000000`, 1m `16000015000000`
+- 실행 순서 1~36이 누락과 중복 없이 기록됨
+
+환경과 원본값은 `results/environment.json`, `results/raw-runs.csv`, `results/summary.csv`, `results/validation.json`에서 확인할 수 있다. 수치 해석과 그래프, 실험 한계의 상세 문서화는 6단계 범위다.
+
 ## 현재 범위
 
-현재 3,001건 검증 시간과 실행계획은 기능 확인 자료이며 Reader 성능 수치로 사용할 수 없다. 블로그 초안은 실제 전체 측정이 끝난 뒤 6단계에서 작성한다.
+1~5단계 구현과 전체 측정이 완료됐다. 3,001건의 이전 검증 시간은 기능 확인 자료이며 성능 수치로 사용하지 않는다. 아키텍처·방법론·결과 해석 문서와 실제 측정값 기반 블로그 초안은 사용자가 계속 진행하라고 요청한 뒤 6단계에서 작성한다.

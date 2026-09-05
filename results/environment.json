@@ -1,0 +1,66 @@
+{
+  "capturedAtUtc": "2026-09-05T05:57:22.0203234+00:00",
+  "timezone": "Korea Standard Time",
+  "os": {
+    "caption": "Microsoft Windows 11 Home",
+    "version": "10.0.26200",
+    "buildNumber": "26200",
+    "architecture": "64비트"
+  },
+  "cpu": {
+    "model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "logicalProcessors": 8
+  },
+  "hostRamBytes": 8379490304,
+  "java": "openjdk version \"21.0.8\" 2025-07-15 LTS\r\nOpenJDK Runtime Environment Temurin-21.0.8+9 (build 21.0.8+9-LTS)\r\nOpenJDK 64-Bit Server VM Temurin-21.0.8+9 (build 21.0.8+9-LTS, mixed mode, sharing)",
+  "gradle": "8.12.1",
+  "springBoot": "3.5.16",
+  "springBatch": "5.2.6",
+  "hibernate": "6.6.53.Final",
+  "postgresql": "16.15",
+  "docker": {
+    "context": "default",
+    "engineVersion": "24.0.7",
+    "composeVersion": "2.23.3-desktop.2",
+    "operatingSystem": "Docker Desktop",
+    "architecture": "x86_64",
+    "cpus": 8,
+    "memoryBytes": 3998875648
+  },
+  "source": {
+    "gitCommit": "26e9f85761583affa1ac963ff1f83dfd316d05af",
+    "workingTreeCleanBeforeMeasurement": true
+  },
+  "measurement": {
+    "readers": [
+      "OFFSET",
+      "KEYSET"
+    ],
+    "targetRows": [
+      100000,
+      500000,
+      1000000
+    ],
+    "indexModes": [
+      "OFF",
+      "ON"
+    ],
+    "repetitions": 3,
+    "measuredRuns": 36,
+    "chunkSize": 1000,
+    "pageSize": 1000,
+    "status": "READY",
+    "processorWriter": "동일 checksum processor와 in-memory aggregate writer",
+    "threading": "single-threaded step",
+    "jvmOptions": [
+      "-XX:+UseG1GC",
+      "-Xms512m",
+      "-Xmx512m"
+    ],
+    "gcLogging": "-Xlog:gc*,safepoint:file=<run-file>:time,uptime,level,tags",
+    "oldGenPool": "G1 Old Gen",
+    "oldGenSampleIntervalMs": 50,
+    "cachePolicy": "명시적 조건별 warm-up 뒤의 warm-cache 비교이며 OS page cache를 강제로 비우지 않음",
+    "runOrder": "반복 1·3은 OFFSET→KEYSET, 반복 2는 KEYSET→OFFSET; index 순서는 OFF→ON, ON→OFF, OFF→ON으로 교차"
+  }
+}
