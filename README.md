@@ -1,6 +1,6 @@
 # Batch Reader Benchmark Lab
 
-Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **5단계 전체 측정까지 완료**되어 있으며 36개 공식 run과 원본 GC·EXPLAIN 자료를 보존한다.
+Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. **구현·전체 측정·결과 문서화까지 완료**했으며 36개 공식 run과 원본 GC·EXPLAIN 자료를 보존한다.
 
 ## 현재 구성
 
@@ -17,6 +17,8 @@ Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로
 - `(status, id)` 보조 인덱스 ON/OFF, 카탈로그 검증과 `ANALYZE` 자동화
 - 앞·중간·마지막 페이지의 OFFSET/Keyset SQL, 바인딩과 EXPLAIN JSON 수집
 - warm-up 분리, 교차 실행 순서와 36개 run 검증을 포함한 전체 matrix 스크립트
+- 원본 결과에서 EXPLAIN·GC·그래프용 CSV를 다시 만드는 보고서 데이터 스크립트
+- 아키텍처, 방법론, 결과 보고서와 실제 측정값 기반 블로그 초안
 - JUnit 5 단위 테스트와 Testcontainers PostgreSQL 통합 테스트
 
 ## 사전 조건
@@ -62,7 +64,7 @@ docker compose down
 전체 테스트에는 Docker가 필요한 Testcontainers 통합 테스트가 포함된다.
 
 ```powershell
-.\gradlew.bat test
+.\gradlew.bat --no-daemon test
 ```
 
 Docker 없이 단위 테스트만 실행할 수 있다.
@@ -124,6 +126,8 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 - `results/gc/<run-id>.log`: JVM unified GC 원본 로그
 
 `targetRows`와 실제 read/write 수가 다르면 `countValid=false`로 기록되며 summary에서 제외된다. 전체 scale 증가 배율과 Reader 간 비율은 공식 36개 run에서 계산됐다.
+
+`summary.csv`는 36개 원본을 없애거나 대신하는 파일이 아니다. Reader·scale·index의 12개 조건별 평균·범위·표준편차와 비교 비율을 한 행씩 제공해 표와 그래프에서 직접 읽게 하는 파생 데이터다. `validate-results.ps1`이 `runs/*.json`에서 모든 값을 독립 재계산한다.
 
 ## 인덱스와 EXPLAIN 수집
 
@@ -190,6 +194,17 @@ EXPLAIN 실행시간은 Reader Step 시간과 별도 산출물에 기록하며 b
 - `results/execution-order.csv`: 36개 run의 실제 실행 순서
 - `results/validation.json`: 산출물 수, 실행 순서와 scale별 checksum 검증 결과
 
+문서와 그래프에 쓰는 단위로 EXPLAIN과 GC 원본을 평탄화하려면 다음 명령을 실행한다.
+
+```powershell
+.\scripts\build-report-data.ps1
+```
+
+- `results/report/duration.csv`: 초 단위 실행시간·배율과 MiB 단위 Old Gen
+- `results/report/explain.csv`: 36개 plan의 scan rows, buffer와 실행시간
+- `results/report/gc-runs.csv`: run별 JVM 전체 GC pause와 old region
+- `results/report/gc-summary.csv`: 12개 조건별 GC 요약
+
 ## 5단계 공식 측정 결과
 
 2026-09-05에 측정 소스 커밋 `26e9f85761583affa1ac963ff1f83dfd316d05af`로 전체 matrix를 실행했다. 36개 run이 모두 `COMPLETED`였고, 각 조건의 3회 측정이 유효했다. `validate-results.ps1`은 원본 run JSON에서 summary 통계를 독립 재계산해 다음 항목을 확인했다.
@@ -200,8 +215,25 @@ EXPLAIN 실행시간은 Reader Step 시간과 별도 산출물에 기록하며 b
 - scale별 두 Reader checksum 일치: 100k `202165400000`, 500k `4121634000000`, 1m `16000015000000`
 - 실행 순서 1~36이 누락과 중복 없이 기록됨
 
-환경과 원본값은 `results/environment.json`, `results/raw-runs.csv`, `results/summary.csv`, `results/validation.json`에서 확인할 수 있다. 수치 해석과 그래프, 실험 한계의 상세 문서화는 6단계 범위다.
+평균 Step 실행시간은 다음과 같았다.
+
+| READY 행 | OFFSET OFF | KEYSET OFF | OFFSET/KEYSET | OFFSET ON | KEYSET ON | OFFSET/KEYSET |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k | 5.924초 | 4.794초 | 1.236배 | 7.346초 | 5.553초 | 1.323배 |
+| 500k | 48.620초 | 12.105초 | 4.017배 | 41.703초 | 13.437초 | 3.104배 |
+| 1m | 177.140초 | 19.504초 | 9.082배 | 132.354초 | 18.310초 | 7.228배 |
+
+공식 EXPLAIN 36개는 인덱스 ON/OFF 모두 보조 인덱스가 아닌 `settlement_item_pkey`를 선택했다. 따라서 ON/OFF 시간 차이를 보조 인덱스 사용 효과로 단정하지 않는다. 세부 결과와 한계는 `docs/result-report.md`에 기록했다.
+
+## 문서
+
+- `docs/architecture.md`: 구성 요소, Batch 실행과 결과 데이터 흐름
+- `docs/methodology.md`: 통제 변수, 측정·검증 방법과 한계
+- `docs/result-report.md`: 실행시간, EXPLAIN, Old Gen·GC 결과 해석
+- `BLOG_DRAFT.md`: 실제 공식 측정값만 사용한 기술 블로그 초안
+- `docs/decisions.md`: 단계별 기술 결정
+- `PROGRESS.md`: 실행·테스트 결과와 최종 상태
 
 ## 현재 범위
 
-1~5단계 구현과 전체 측정이 완료됐다. 3,001건의 이전 검증 시간은 기능 확인 자료이며 성능 수치로 사용하지 않는다. 아키텍처·방법론·결과 해석 문서와 실제 측정값 기반 블로그 초안은 사용자가 계속 진행하라고 요청한 뒤 6단계에서 작성한다.
+1~6단계가 완료됐다. 3,001건의 이전 검증 시간은 기능 확인 자료이며 성능 수치로 사용하지 않는다. 공식 결론은 `results/`의 36개 run과 그 원본에서 재계산한 자료만 사용한다.

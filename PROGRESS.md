@@ -17,6 +17,12 @@
 - 5단계: 100k/500k/1m × OFFSET/Keyset × index OFF/ON × 3회, 공식 36개 run 실행 완료
 - 5단계: run별 GC 로그 36개, 조건별 EXPLAIN JSON 36개, raw 36행과 summary 12행 생성
 - 5단계: 원본 run JSON에서 요약 통계를 독립 재계산하고 파일 연결, 실행 순서, scale별 checksum 일치를 검증
+- 6단계: 구성 요소, Reader·재시작·측정과 결과 데이터 흐름을 설명하는 `docs/architecture.md` 작성
+- 6단계: 통제 변수, 통계식, cache·GC 측정 범위와 한계를 명시한 `docs/methodology.md` 작성
+- 6단계: 실행시간·증가 배율·EXPLAIN·Old Gen·GC와 정합성을 실제 수치로 해석한 `docs/result-report.md` 작성
+- 6단계: 실제 36개 run과 실행계획 수치만 사용한 `BLOG_DRAFT.md` 작성
+- 6단계: EXPLAIN과 GC 원본을 그래프·표용 CSV로 재생성하는 `build-report-data.ps1`과 `results/report/` 산출물 작성
+- 6단계: README에 최종 결과, `summary.csv`의 역할, 문서·보고서 데이터 재현 절차 반영
 
 ## 2. 실제 실행한 테스트와 결과
 
@@ -25,6 +31,12 @@
 - 공식 측정 전과 결과·문서 갱신 후 `.\gradlew.bat --no-daemon test` 실행: 최종 `BUILD SUCCESSFUL` (1분 33초), 총 20개, 실패 0개, 오류 0개, 건너뜀 0개
 - 단위 테스트에서 결정적 seed 공식, Keyset 상태 전이와 빈/부분 페이지, Old Gen sampler, 결과 평균·표준편차·규모 증가 배율·Reader 비율을 검증
 - Testcontainers PostgreSQL 16.15에서 두 Reader의 건수/checksum/정렬/SQL, 1001건 재시작, 인덱스 ON/OFF 카탈로그와 EXPLAIN 산출물을 검증
+- 6단계 최종 README 테스트 명령 실행: `BUILD SUCCESSFUL` (25초, Gradle cache로 4개 task up-to-date)
+- 테스트 XML 재확인: 총 20개, 실패 0개, 오류 0개, 건너뜀 0개
+- `validate-results.ps1`: 36 run, 12 summary, GC 36, EXPLAIN 36과 summary 독립 재계산 재통과
+- `build-report-data.ps1`: duration 12행, EXPLAIN 36행, GC run 36행, GC summary 12행 생성
+- 보고서 CSV를 연속 두 번 생성한 SHA-256 hash가 모두 같아 결정적 재생성을 확인
+- PowerShell 스크립트 7개의 parser 검사 통과
 
 ### 공식 전체 측정
 
@@ -54,16 +66,14 @@
 - run별 독립 JVM과 GC 로그, raw JSON/CSV 및 재계산 가능한 summary CSV 생성
 - 실제 SQL·바인딩·EXPLAIN JSON 수집과 공식 결과 연결
 - 36-run 고정 matrix, warm-up 분리, 교차 순서, 재개와 완결성 검증
+- 원본에서 보고서용 duration/EXPLAIN/GC CSV를 다시 만드는 파생 데이터 흐름
+- 아키텍처, 방법론, 공식 결과 보고서와 기술 블로그 초안
 
 ## 4. 미완료 작업과 측정 대기 항목
 
-- 6단계 아키텍처와 데이터 흐름 문서
-- 공정한 비교를 위한 통제 변수와 측정 방법 문서
-- 공식 결과 표·그래프용 데이터 정리와 EXPLAIN·GC 해석
-- 한계와 재현 주의사항, 실제 측정값만 사용한 기술 블로그 초안
-- README 재현 절차의 최종 단계 검증
+AGENTS.md에 정의된 1~6단계와 필수 결과물이 모두 완료됐다. 실패하거나 중단된 공식 run과 측정 대기 항목은 없다.
 
-5단계 측정 대기 항목은 없다. 6단계는 사용자가 계속 진행하라고 요청하기 전까지 시작하지 않는다.
+추가 데이터 분포, 반복 횟수 확대, 다른 pageSize, 실제 Writer I/O와 다른 Reader 비교는 현재 프로젝트 범위 밖이며 수행하지 않았다.
 
 ## 5. 발생한 오류와 확인된 원인
 
@@ -77,13 +87,7 @@
 
 ## 6. 다음 작업에서 바로 시작할 내용
 
-사용자가 `계속 진행해`라고 요청하면 `AGENTS.md`, `PROJECT_SPEC.md`, `PROGRESS.md`를 다시 읽고 6단계만 진행한다.
-
-1. `results/` 원본과 summary를 바탕으로 아키텍처·방법론·결과 문서 작성
-2. 36개 run과 EXPLAIN/GC 자료를 연결해 결과를 해석하고 그래프용 데이터를 준비
-3. 환경 제약, warm-cache 조건, 3회 반복의 한계와 재현 주의사항 기록
-4. 실제 결과만 인용하는 `BLOG_DRAFT.md` 작성
-5. README 재현 절차를 최종 검증하고 관련 테스트 실행
+정의된 다음 주요 단계는 없다. 현재 브랜치를 검토하고 PR로 병합하면 프로젝트 완료 상태다. 추가 실험이나 문서 수정은 사용자가 구체적으로 요청할 때 별도 범위로 시작한다.
 
 ## 7. 실행 및 재현 명령어
 
@@ -99,6 +103,9 @@
 
 # 생성된 결과를 원본 JSON에서 독립 검증
 .\scripts\validate-results.ps1
+
+# 문서와 그래프용 파생 CSV 재생성
+.\scripts\build-report-data.ps1
 ```
 
 단일 조건과 개별 EXPLAIN은 다음처럼 재현한다.
@@ -118,8 +125,9 @@
 - 인덱스/EXPLAIN: `src/main/java/dev/benchmark/batchreader/experiment/`
 - 실행 스크립트: `scripts/seed-scale.*`, `run-benchmark.*`, `collect-explain.*`
 - 5단계 스크립트: `scripts/run-full-matrix.ps1`, `write-environment.ps1`, `validate-results.ps1`
+- 6단계 스크립트: `scripts/build-report-data.ps1`
 - 테스트: 단위 테스트와 Testcontainers Reader/인덱스/EXPLAIN 통합 테스트
-- 문서: `README.md`, `docs/decisions.md`, `PROGRESS.md`
+- 문서: `README.md`, `docs/decisions.md`, `docs/architecture.md`, `docs/methodology.md`, `docs/result-report.md`, `BLOG_DRAFT.md`, `PROGRESS.md`
 
 ## 9. 생성된 측정 결과 파일 경로
 
@@ -131,6 +139,10 @@
 - 검증: `results/validation.json`
 - 실행계획: `results/explain/*.json` 36개
 - GC 원본: `results/gc/*.log` 36개
+- 보고서 실행시간: `results/report/duration.csv` 12행
+- 보고서 EXPLAIN: `results/report/explain.csv` 36행
+- 보고서 GC run: `results/report/gc-runs.csv` 36행
+- 보고서 GC 요약: `results/report/gc-summary.csv` 12행
 - 비공식 warm-up: `build/stage5-warmup/` (Git 제외)
 
 ## 검증 환경
