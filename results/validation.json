@@ -1,0 +1,18 @@
+{
+  "validatedAtUtc": "2026-09-05T13:09:07.3206252+00:00",
+  "valid": true,
+  "measuredRuns": 36,
+  "groups": 12,
+  "runsPerGroup": 3,
+  "rawRows": 36,
+  "summaryRows": 12,
+  "explainFiles": 36,
+  "gcLogs": 36,
+  "executionOrderComplete": true,
+  "summaryRecalculated": true,
+  "checksumsByTargetRows": {
+    "100000": 202165400000,
+    "500000": 4121634000000,
+    "1000000": 16000015000000
+  }
+}

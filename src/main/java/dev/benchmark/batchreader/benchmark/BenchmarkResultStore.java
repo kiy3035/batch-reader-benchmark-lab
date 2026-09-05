@@ -12,11 +12,13 @@ import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 public class BenchmarkResultStore {
 
-    private static final String RAW_HEADER = "runId,startedAt,endedAt,readerType,targetRows,indexMode,indexVerified,indexDefinition,repetition,durationNs,durationMs,readCount,writeCount,commitCount,checksum,exitStatus,peakOldGenBytes,oldGenMeasurement,gcLogPath,countValid\n";
-    private static final String SUMMARY_HEADER = "readerType,targetRows,indexMode,successfulRuns,meanDurationMs,minDurationMs,maxDurationMs,stddevDurationMs,meanPeakOldGenBytes,maxPeakOldGenBytes\n";
+    private static final String RAW_HEADER = "runId,executionOrder,startedAt,endedAt,readerType,targetRows,indexMode,indexVerified,indexDefinition,repetition,durationNs,durationMs,durationSeconds,readCount,writeCount,commitCount,checksum,exitStatus,peakOldGenBytes,oldGenMeasurement,gcLogPath,explainArtifactPath,jvmOptions,countValid\n";
+    private static final String SUMMARY_HEADER = "readerType,targetRows,indexMode,successfulRuns,meanDurationMs,meanDurationSeconds,minDurationMs,maxDurationMs,stddevDurationMs,growthVs100k,growthVs500k,offsetToKeysetRatio,meanPeakOldGenBytes,maxPeakOldGenBytes\n";
 
     private final Path resultsDirectory;
     private final ObjectMapper objectMapper;
@@ -70,36 +72,70 @@ public class BenchmarkResultStore {
         }
         String peak = result.peakOldGenBytes() == null ? "" : result.peakOldGenBytes().toString();
         String row = String.join(",",
-                result.runId(), result.startedAt().toString(), result.endedAt().toString(),
+                result.runId(), Integer.toString(result.executionOrder()), result.startedAt().toString(),
+                result.endedAt().toString(),
                 result.readerType().name(), Long.toString(result.targetRows()), result.indexMode().name(),
                 Boolean.toString(result.indexVerified()), quote(result.indexDefinition()),
                 Integer.toString(result.repetition()), Long.toString(result.durationNs()),
-                format(result.durationMs()), Long.toString(result.readCount()), Long.toString(result.writeCount()),
+                format(result.durationMs()), format(result.durationSeconds()), Long.toString(result.readCount()),
+                Long.toString(result.writeCount()),
                 Long.toString(result.commitCount()), Long.toString(result.checksum()), result.exitStatus(), peak,
-                quote(result.oldGenMeasurement()), result.gcLogPath(), Boolean.toString(result.countValid())) + "\n";
+                quote(result.oldGenMeasurement()), quote(result.gcLogPath()), quote(result.explainArtifactPath()),
+                quote(result.jvmOptions()), Boolean.toString(result.countValid())) + "\n";
         Files.writeString(raw, row, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
     }
 
-    /** Reader/scale/index별 성공 결과의 기본 통계를 summary CSV로 쓴다. */
+    /** Reader/scale/index별 성공 결과와 규모·Reader 비교 비율을 summary CSV로 쓴다. */
     private void writeSummary(List<BenchmarkRunResult> runs) throws IOException {
+        Map<GroupKey, List<BenchmarkRunResult>> groups = runs.stream()
+                .filter(this::isSuccessful)
+                .collect(Collectors.groupingBy(run ->
+                        new GroupKey(run.readerType(), run.targetRows(), run.indexMode())));
+        Map<GroupKey, Double> means = groups.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey,
+                entry -> entry.getValue().stream().mapToDouble(BenchmarkRunResult::durationMs).average().orElseThrow()));
         StringBuilder csv = new StringBuilder(SUMMARY_HEADER);
-        runs.stream().filter(run -> run.countValid() && "COMPLETED".equals(run.exitStatus()))
-                .collect(java.util.stream.Collectors.groupingBy(run ->
-                        run.readerType() + "," + run.targetRows() + "," + run.indexMode()))
-                .entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry -> {
+        groups.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+                    GroupKey key = entry.getKey();
                     List<BenchmarkRunResult> group = entry.getValue();
                     var duration = group.stream().mapToDouble(BenchmarkRunResult::durationMs).summaryStatistics();
                     double mean = duration.getAverage();
                     double variance = group.stream().mapToDouble(run -> Math.pow(run.durationMs() - mean, 2)).average().orElse(0);
                     var peaks = group.stream().filter(run -> run.peakOldGenBytes() != null)
                             .mapToLong(BenchmarkRunResult::peakOldGenBytes).summaryStatistics();
-                    csv.append(entry.getKey()).append(',').append(group.size()).append(',')
-                            .append(format(mean)).append(',').append(format(duration.getMin())).append(',')
-                            .append(format(duration.getMax())).append(',').append(format(Math.sqrt(variance))).append(',')
+                    csv.append(key.readerType()).append(',').append(key.targetRows()).append(',')
+                            .append(key.indexMode()).append(',').append(group.size()).append(',')
+                            .append(format(mean)).append(',').append(format(mean / 1_000.0)).append(',')
+                            .append(format(duration.getMin())).append(',').append(format(duration.getMax())).append(',')
+                            .append(format(Math.sqrt(variance))).append(',')
+                            .append(scaleRatio(means, key, 100_000L)).append(',')
+                            .append(scaleRatio(means, key, 500_000L)).append(',')
+                            .append(readerRatio(means, key)).append(',')
                             .append(peaks.getCount() == 0 ? "" : format(peaks.getAverage())).append(',')
                             .append(peaks.getCount() == 0 ? "" : peaks.getMax()).append('\n');
                 });
         Files.writeString(resultsDirectory.resolve("summary.csv"), csv, StandardCharsets.UTF_8);
+    }
+
+    /** 집계에 사용할 완료, 건수 일치, 인덱스 검증 run인지 확인한다. */
+    private boolean isSuccessful(BenchmarkRunResult run) {
+        return run.countValid() && run.indexVerified() && "COMPLETED".equals(run.exitStatus());
+    }
+
+    /** 현재 규모가 기준 규모보다 클 때 같은 Reader/index의 평균 증가 배율을 계산한다. */
+    private String scaleRatio(Map<GroupKey, Double> means, GroupKey key, long baselineRows) {
+        if (key.targetRows() <= baselineRows) {
+            return "";
+        }
+        Double baseline = means.get(new GroupKey(key.readerType(), baselineRows, key.indexMode()));
+        return baseline == null ? "" : format(means.get(key) / baseline);
+    }
+
+    /** 같은 scale/index에서 OFFSET 평균을 Keyset 평균으로 나눈 비율을 계산한다. */
+    private String readerRatio(Map<GroupKey, Double> means, GroupKey key) {
+        Double offset = means.get(new GroupKey(ReaderType.OFFSET, key.targetRows(), key.indexMode()));
+        Double keyset = means.get(new GroupKey(ReaderType.KEYSET, key.targetRows(), key.indexMode()));
+        return offset == null || keyset == null ? "" : format(offset / keyset);
     }
 
     /** 파일명에 사용할 수 없는 runId 문자를 밑줄로 바꾼다. */
@@ -115,5 +151,18 @@ public class BenchmarkResultStore {
     /** CSV 문자열의 큰따옴표를 이스케이프한다. */
     private String quote(String value) {
         return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+
+    private record GroupKey(ReaderType readerType, long targetRows, IndexMode indexMode)
+            implements Comparable<GroupKey> {
+
+        /** Reader, 규모, 인덱스 순서로 summary 행을 안정적으로 정렬한다. */
+        @Override
+        public int compareTo(GroupKey other) {
+            return Comparator.comparing((GroupKey key) -> key.readerType().name())
+                    .thenComparingLong(GroupKey::targetRows)
+                    .thenComparing(key -> key.indexMode().name())
+                    .compare(this, other);
+        }
     }
 }

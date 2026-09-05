@@ -4,6 +4,7 @@ import java.time.Instant;
 
 public record BenchmarkRunResult(
         String runId,
+        int executionOrder,
         Instant startedAt,
         Instant endedAt,
         ReaderType readerType,
@@ -14,6 +15,7 @@ public record BenchmarkRunResult(
         int repetition,
         long durationNs,
         double durationMs,
+        double durationSeconds,
         long readCount,
         long writeCount,
         long commitCount,
@@ -22,6 +24,8 @@ public record BenchmarkRunResult(
         Long peakOldGenBytes,
         String oldGenMeasurement,
         String gcLogPath,
+        String explainArtifactPath,
+        String jvmOptions,
         boolean countValid
 ) {
 }
