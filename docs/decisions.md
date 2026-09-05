@@ -56,3 +56,13 @@ checksum 기여값은 `id * 31 + 센트 단위 amount`다. Writer는 전체 ID�
 - JSON run 파일을 원본으로 summary를 매번 다시 계산한다. `COMPLETED`이면서 target count가 맞는 run만 집계한다. raw CSV에는 실패와 count mismatch도 보존한다.
 
 3단계의 `indexMode`는 요청 조건을 기록하는 파라미터다. 실제 `(status, id)` 보조 인덱스 전환과 카탈로그 검증은 4단계에서 연결하므로, 그 전의 출력은 정식 인덱스 비교 결과로 해석하지 않는다.
+
+## 4단계 인덱스와 EXPLAIN
+
+- 실험 보조 인덱스 이름은 `idx_settlement_item_status_id`, 정의는 `btree (status, id)`로 고정했다. PK와 그 인덱스는 변경하지 않는다.
+- `benchmarkJob`의 Job listener가 Step 전에 ON/OFF DDL, `ANALYZE settlement_item`, 카탈로그 검증을 수행한다. 따라서 Step listener가 재는 Reader 실행시간에서 인덱스 준비 비용을 분리한다.
+- ON 검증은 이름만 보지 않고 PostgreSQL 카탈로그에서 컬럼 순서, valid/ready, non-unique 조건과 실제 `pg_get_indexdef`를 확인한다. OFF는 해당 이름의 보조 인덱스가 존재하지 않아야 한다.
+- 인덱스 변경과 `EXPLAIN ANALYZE`는 로컬 호스트의 `batch_benchmark` 데이터베이스로 제한했다. 잘못 설정한 원격 또는 다른 이름의 DB에는 실험성 DDL을 실행하지 않는다.
+- 페이지 위치는 pageSize 1000 경계의 첫 페이지, 중앙 페이지, 마지막 페이지로 계산한다. OFFSET 직전 행의 실제 ID를 조회해 같은 위치의 Keyset `lastId`로 기록하므로 ID gap이 있어도 대응 관계가 유지된다.
+- SQL의 placeholder와 이름별 실제 바인딩, PostgreSQL 원본 `FORMAT JSON`을 함께 보존한다. 별도로 scan/node 유형, rows, loops, rows removed by filter, shared hit/read blocks, sort, planning/execution time을 평탄화해 후속 집계가 원본 JSON 파서에 종속되지 않게 했다.
+- 4단계 검증은 READY 3,001건의 소규모 합성 데이터로만 수행했다. 이때의 plan 선택과 시간은 기능 검증 근거이며 5단계 성능 결과로 사용하지 않는다.

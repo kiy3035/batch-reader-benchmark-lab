@@ -1,6 +1,6 @@
 # Batch Reader Benchmark Lab
 
-Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **3단계 벤치마크·JVM 측정 도구까지 완료**되어 있으며 전체 성능 실험은 아직 실행하지 않았다.
+Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **4단계 인덱스·EXPLAIN 수집 도구까지 완료**되어 있으며 전체 성능 실험은 아직 실행하지 않았다.
 
 ## 현재 구성
 
@@ -14,6 +14,8 @@ Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로
 - 두 Reader가 공유하는 chunk size 1000, checksum Processor/Writer 계약
 - 파라미터 기반 단일 benchmark Job, wall-clock/건수/checksum/Old Gen 수집
 - 고정 512MB heap/G1GC 독립 JVM 실행 스크립트와 CSV/JSON 결과 저장
+- `(status, id)` 보조 인덱스 ON/OFF, 카탈로그 검증과 `ANALYZE` 자동화
+- 앞·중간·마지막 페이지의 OFFSET/Keyset SQL, 바인딩과 EXPLAIN JSON 수집
 - JUnit 5 단위 테스트와 Testcontainers PostgreSQL 통합 테스트
 
 ## 사전 조건
@@ -99,11 +101,11 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 ./scripts/seed-scale.sh 100000
 ```
 
-스크립트는 100,000 / 500,000 / 1,000,000만 허용하도록 준비됐지만, **1단계에서는 전체 규모 seed와 성능 실험을 실행하지 않았다**.
+스크립트는 100,000 / 500,000 / 1,000,000만 허용하도록 준비됐다. 아직 전체 규모 seed와 성능 실험은 실행하지 않았다.
 
 ## 단일 benchmark run
 
-먼저 DB에 해당 scale seed를 준비하고 JAR를 빌드한다. 4단계가 끝나기 전까지 `indexMode`는 실행 메타데이터이며 실제 보조 인덱스 상태를 자동 변경하거나 검증하지 않는다.
+먼저 DB에 해당 scale seed를 준비하고 JAR를 빌드한다. `benchmarkJob`은 Step 측정을 시작하기 전에 `indexMode`에 맞춰 고정 보조 인덱스를 생성하거나 삭제하고, `ANALYZE settlement_item`을 실행한 뒤 PostgreSQL 카탈로그의 실제 정의를 검증한다. 이 준비 시간은 Step wall-clock 시간에 포함되지 않는다.
 
 ```powershell
 .\gradlew.bat bootJar
@@ -116,12 +118,43 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 생성 파일:
 
 - `results/runs/<run-id>.json`: run 전체 지표
-- `results/raw-runs.csv`: 재집계 가능한 원본 행
+- `results/raw-runs.csv`: 검증된 인덱스 상태를 포함한 재집계 가능한 원본 행
 - `results/summary.csv`: Reader/scale/index별 성공 run의 평균·최소·최대·표준편차와 Old Gen 요약
 - `results/gc/<run-id>.log`: JVM unified GC 원본 로그
 
 `targetRows`와 실제 read/write 수가 다르면 `countValid=false`로 기록되며 summary에서 제외된다. 전체 scale 증가 배율과 Reader 간 비율은 5단계 전체 matrix 결과가 존재할 때 계산한다.
 
+## 인덱스와 EXPLAIN 수집
+
+대상 scale seed와 Boot JAR를 준비한 뒤 인덱스 모드별 실행계획을 수집한다.
+
+```powershell
+.\gradlew.bat bootJar
+.\scripts\seed-scale.ps1 -ReadyRows 100000
+.\scripts\collect-explain.ps1 -TargetRows 100000 -IndexMode OFF
+.\scripts\collect-explain.ps1 -TargetRows 100000 -IndexMode ON
+```
+
+```bash
+./gradlew bootJar
+./scripts/seed-scale.sh 100000
+./scripts/collect-explain.sh 100000 OFF
+./scripts/collect-explain.sh 100000 ON
+```
+
+수집기는 실제 READY 건수가 `TargetRows`와 다르면 중단한다. 인덱스 작업과 `EXPLAIN ANALYZE`는 JDBC URL의 호스트가 `localhost`, `127.0.0.1`, `::1` 중 하나이고 DB 이름이 `batch_benchmark`일 때만 실행된다.
+
+`results/explain/<scale>-<reader>-<index>-<position>.json`에는 다음 근거가 저장된다.
+
+- 고정 인덱스 이름 `idx_settlement_item_status_id`와 카탈로그에서 읽은 실제 정의
+- `FIRST`, `MIDDLE`, `LAST` 위치의 SQL과 이름별 바인딩 값
+- 같은 페이지를 가리키는 OFFSET과 `correspondingLastId`
+- PostgreSQL 원본 `FORMAT JSON` 결과
+- 모든 plan node의 scan 유형, 예상/실제 rows, loops, rows removed, shared hit/read blocks와 sort 정보
+- planning time과 execution time
+
+EXPLAIN 실행시간은 Reader Step 시간과 별도 산출물에 기록하며 benchmark 평균에 포함하지 않는다.
+
 ## 현재 범위
 
-인덱스 전환과 상태 검증, EXPLAIN, 전체 36회 실험과 블로그 초안은 다음 단계 작업이다. 현재 smoke 검증 시간은 Reader 성능 수치로 사용할 수 없다.
+다음 작업은 5단계의 100k/500k/1m 전체 36회 실험이다. 현재 3,001건 검증 시간과 실행계획은 기능 확인 자료이며 Reader 성능 수치로 사용할 수 없다. 블로그 초안은 실제 전체 측정이 끝난 뒤 6단계에서 작성한다.

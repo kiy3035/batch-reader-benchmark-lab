@@ -36,7 +36,7 @@ class BenchmarkResultStoreTest {
                                       String exitStatus, boolean valid) {
         return new BenchmarkRunResult(runId, Instant.parse("2026-01-01T00:00:00Z"),
                 Instant.parse("2026-01-01T00:00:01Z"), ReaderType.OFFSET, 100_000L, IndexMode.OFF,
-                1, (long) (durationMs * 1_000_000), durationMs, 100_000, 100_000, 100,
+                true, "ABSENT", 1, (long) (durationMs * 1_000_000), durationMs, 100_000, 100_000, 100,
                 1234L, exitStatus, peak, "MEASURED", "results/gc/" + runId + ".log", valid);
     }
 }
