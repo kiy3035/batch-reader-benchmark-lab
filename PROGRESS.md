@@ -19,6 +19,11 @@
 - 두 Reader에 동일한 status, ID 정렬, chunk/page size 1000과 단일 스레드 Step 적용
 - Keyset `lastId`의 Step ExecutionContext 저장 및 동일 JobInstance 재시작 구현
 - 경계 크기, ID gap, 혼합 상태, SQL 형태, checksum, 누락·중복·정렬 검증 작성
+- JobParameter로 Reader/scale/index/repetition/runId/status를 선택하는 `benchmarkJob` 구현
+- Step wall-clock nanoseconds, read/write/commit, checksum, exit/count 유효성 수집 구현
+- `G1 Old Gen` MXBean 50ms sampler와 측정 불가 N/A 처리 구현
+- run별 JSON, raw CSV와 성공 run summary CSV 저장 구현
+- 512MB 고정 heap/G1GC/unified GC log를 사용하는 PowerShell/Bash runner 구현
 
 ## 2. 실제 실행한 테스트와 결과
 
@@ -58,7 +63,7 @@
 - PostgreSQL 통합 테스트: READY 0/1/999/1000/1001건에서 OFFSET/Keyset count, ID 순서, 중복, checksum 일치
 - READY 이외 상태가 섞이고 ID gap이 있는 데이터에서 두 Reader 결과 일치
 - Hibernate 실제 SQL에서 OFFSET의 `offset ? rows fetch first ? rows only`와 Keyset의 `id>? ... fetch first ? rows only` 확인
-- 1001건에서 OFFSET SQL이 여러 페이지 실행되고 Reader page가 2 이상 증가함을 확인
+- 1001건에서 OFFSET SQL이 2회 이상 실행돼 후반 페이지 조회가 발생함을 확인
 - 두 번째 chunk에서 의도적으로 실패한 Keyset Job의 체크포인트가 `lastId=1000`인지 확인
 - 같은 JobInstance 재시작 뒤 ID 1~1001이 누락·중복 없이 한 번씩 커밋되는지 확인
 - OFFSET Reader도 두 번째 chunk 실패 뒤 같은 JobInstance에서 ID 1~1001을 정확히 한 번 커밋하는지 확인
@@ -83,6 +88,19 @@
 - 확인된 시간은 기동 검증 로그이며 성능 비교 결과로 사용하지 않음
 - 검증 후 임시 컨테이너, network, volume 정리 완료
 
+### 3단계 측정 도구 검증
+
+- 최종 전체 테스트: `BUILD SUCCESSFUL` (2026-09-05), 1분 4초
+- 총 15개 테스트, 실패 0개, 오류 0개, 건너뜀 0개
+- 결과 저장 테스트에서 성공 2건의 평균 15ms, 최소 10ms, 최대 20ms, 표준편차 5ms 및 Old Gen 평균/최대 재계산 확인
+- Old Gen peak 갱신과 pool 부재 시 null/N/A 처리 확인
+- PostgreSQL 16.15 smoke 데이터 4건으로 프로덕션 `benchmarkJob` 실행 성공
+- 고정 `-Xms512m -Xmx512m`, G1GC와 unified GC log 적용 확인
+- smoke run 실제 기록: read 4, write 4, commit 1, checksum 2100651, countValid true
+- JSON, raw CSV, summary CSV와 21,785-byte GC log 생성 확인
+- smoke duration과 Old Gen 0 bytes는 도구 작동 확인값이며 성능 비교 결과가 아님
+- 검증 산출물은 `build/stage3-check/`에 두어 정식 `results/`와 분리함
+
 ## 3. 현재 정상 동작하는 기능
 
 - Gradle Wrapper를 통한 빌드와 테스트
@@ -94,10 +112,11 @@
 - OFFSET/Keyset Reader Job과 공통 Processor/Writer
 - Keyset 페이지별 영속성 컨텍스트 정리와 restart checkpoint
 - Reader 경계값 및 실제 PostgreSQL 정합성 자동 검증
+- 파라미터 기반 단일 benchmark Job과 실행 유효성 판정
+- Old Gen sampler, GC logging runner, 재집계 가능한 JSON/CSV 저장
 
 ## 4. 미완료 작업과 측정 대기 항목
 
-- 3단계 벤치마크 파라미터와 실행시간/건수/checksum/Old Gen 수집
 - 4단계 보조 인덱스 ON/OFF와 실제 SQL/EXPLAIN 수집
 - 5단계 100k/500k/1m 전체 36회 측정과 결과 집계
 - 6단계 아키텍처·방법론·결과 문서와 실제 측정값 기반 블로그 초안
@@ -109,16 +128,18 @@
 - 첫 DB 확인 SQL에서 `batch_job_execution`에 직접 존재하지 않는 `job_name` 컬럼을 조회해 SQL 오류가 발생했다. 애플리케이션 로그에서 Job `COMPLETED`가 확인됐고, 자동 통합 테스트에서도 `JobExecution`과 Step 상태를 검증했다. 다음 메타데이터 조회는 `batch_job_instance`와 join해야 한다.
 - 일반 sandbox에서 Docker 설정 파일과 네트워크 접근이 제한되어, 승인된 로컬 Docker 및 공개 Maven 의존성 명령으로 검증했다. 별도 프로그램 설치나 관리자 권한 작업은 수행하지 않았다.
 - 최초 재시작 테스트에서 실패 플래그를 첫 chunk가 먼저 소비해 의도한 두 번째 chunk 실패가 발생하지 않았다. ID 1001이 포함된 chunk에서만 atomic flag를 전환하도록 테스트를 수정했고, `FAILED → 동일 JobInstance 재시작 → COMPLETED`를 확인했다.
+- benchmark smoke 기동 시 Step-scoped Reader bean의 반환 타입이 인터페이스라 annotation listener 탐색 경고가 출력됐다. Reader에 annotation listener가 없고 ItemStream lifecycle과 결과에는 영향이 없음을 확인했다.
+- PowerShell runner parser 검증은 통과했다. 현재 Windows의 WSL/Bash가 경로 mount와 `/bin/bash` 실행에 실패해 Bash runner의 `bash -n` 검증은 수행하지 못했다. 별도 설치나 관리자 권한 변경은 하지 않았다.
 
 ## 6. 다음 작업에서 바로 시작할 내용
 
-사용자가 `계속 진행해`라고 요청하면 문서와 이 진행 기록을 다시 읽고 3단계만 수행한다.
+사용자가 `계속 진행해`라고 요청하면 문서와 이 진행 기록을 다시 읽고 4단계만 수행한다.
 
-1. Reader 종류, 데이터 크기와 실행 식별자를 JobParameter로 선택하는 단일 벤치마크 진입점
-2. Step wall-clock 시간, 처리 건수, checksum, 실패 상태 수집
-3. 고정 heap/G1GC 실행 스크립트와 run별 GC 로그 경로 구성
-4. `G1 Old Gen` MemoryPoolMXBean 고정 주기 sampler와 peak 집계
-5. raw CSV/JSON 및 요약 산출 구조와 집계 단위 테스트
+1. `(status, id)` 보조 인덱스 ON/OFF 자동화와 카탈로그 상태 검증
+2. 인덱스 변경 뒤 `ANALYZE settlement_item` 수행
+3. 앞·중간·뒤 페이지의 실제 SQL과 바인딩 값 기록
+4. OFFSET/Keyset의 `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` 수집
+5. scan, rows, loops, buffers, sort와 planning/execution time 추출 검증
 
 ## 7. 실행 및 재현 명령어
 
@@ -128,6 +149,8 @@ docker compose up -d --wait postgres
 .\gradlew.bat bootRun --args="run.id=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
 .\gradlew.bat bootRun --args="--spring.batch.job.name=offsetReaderJob run.id=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
 .\gradlew.bat bootRun --args="--spring.batch.job.name=keysetReaderJob run.id=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
+.\gradlew.bat bootJar
+.\scripts\run-benchmark.ps1 -ReaderType OFFSET -TargetRows 100000 -IndexMode OFF -Repetition 1
 docker compose down
 ```
 
@@ -156,10 +179,13 @@ docker compose down
 - `src/main/java/dev/benchmark/batchreader/batch/ReaderJobConfiguration.java`
 - 공통 checksum Processor/Writer와 contribution record
 - `KeysetJpaItemReaderTest`, `ReaderCorrectnessIntegrationTest`, SQL inspector
+- `src/main/java/dev/benchmark/batchreader/benchmark/`의 benchmark Job, listener, sampler와 result store
+- `scripts/run-benchmark.ps1`, `scripts/run-benchmark.sh`
+- `BenchmarkResultStoreTest`, `OldGenSamplerTest`
 
 ## 9. 생성된 측정 결과 파일 경로
 
-없음. 1단계에서는 성능 측정, EXPLAIN, GC 로그와 블로그 결과 수치를 생성하지 않았다.
+정식 결과는 없음. 3단계 smoke 검증 파일은 `build/stage3-check/` 아래 생성했으며 Git에서 제외된다. 전체 측정 전까지 `results/`에는 placeholder만 있다.
 
 ## 검증 환경
 

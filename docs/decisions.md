@@ -46,3 +46,13 @@ Compose 기본 계정 값은 `.env.example`에 공개 가능한 로컬 예시로
 - 두 Step은 단일 스레드이며 chunk/page size 1000과 같은 Entity, Processor, Writer 계약을 사용한다.
 
 checksum 기여값은 `id * 31 + 센트 단위 amount`다. Writer는 전체 ID나 Entity를 메모리에 보관하지 않고 count와 checksum만 유지한다. ID 순서와 중복 검사는 작은 자동 테스트 데이터에서만 목록을 수집한다.
+
+## 3단계 측정 도구
+
+- 단일 `benchmarkJob`이 `readerType`, `targetRows`, `indexMode`, `repetition`, `runId`, `status`, `gcLogPath`를 받는다. 별도 OFFSET/Keyset Job은 smoke와 직접 실행 호환성을 위해 유지한다.
+- Step listener의 `System.nanoTime()` 구간을 wall-clock duration으로 사용하고 시작/종료 `Instant`도 함께 기록한다.
+- Old Gen은 50ms 간격의 daemon sampler가 `G1 Old Gen` MXBean 사용량을 읽는다. pool이 없으면 peak는 null이고 측정 상태에 N/A 사유가 남는다.
+- PowerShell/Bash runner는 run마다 별도 Java 프로세스를 시작하며 G1GC와 512MB 고정 heap, unified GC log를 명시한다.
+- JSON run 파일을 원본으로 summary를 매번 다시 계산한다. `COMPLETED`이면서 target count가 맞는 run만 집계한다. raw CSV에는 실패와 count mismatch도 보존한다.
+
+3단계의 `indexMode`는 요청 조건을 기록하는 파라미터다. 실제 `(status, id)` 보조 인덱스 전환과 카탈로그 검증은 4단계에서 연결하므로, 그 전의 출력은 정식 인덱스 비교 결과로 해석하지 않는다.
