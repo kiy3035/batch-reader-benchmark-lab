@@ -1,4 +1,4 @@
-# 1단계 기술 결정
+# 기술 결정 기록
 
 ## 버전 고정
 
@@ -86,3 +86,12 @@ checksum 기여값은 `id * 31 + 센트 단위 amount`다. Writer는 전체 ID�
 - 공식 36개 run은 모두 `COMPLETED`, `countValid=true`, `indexVerified=true`였다. scale별 checksum도 두 Reader와 모든 인덱스·반복 조건에서 같았다.
 - `validate-results.ps1`은 파일 개수와 연결뿐 아니라 원본 36개 JSON에서 평균, 초 단위 값, 최소·최대, 모표준편차, 규모 증가 배율, OFFSET/Keyset 비율과 Old Gen 요약을 다시 계산해 CSV와 비교한다.
 - 측정이 끝난 뒤 전용 Compose 컨테이너, network와 volume을 제거했다. 공식 결과에는 DB 비밀번호나 임시 애플리케이션 로그를 포함하지 않는다.
+
+## 6단계 문서와 파생 데이터
+
+- `runs/*.json`을 공식 run의 기준 원본으로 유지한다. `raw-runs.csv`는 감사용 평탄화 파일, `summary.csv`는 12개 조건의 통계와 그래프 입력용 파생 파일로 정의했다. 평균만 남겨 원본 편차가 사라지는 것을 막기 위해 세 파일을 모두 보존한다.
+- `build-report-data.ps1`이 summary, 36개 EXPLAIN JSON과 36개 GC 로그에서 `results/report/*.csv`를 재생성한다. 보고서 표가 수작업으로 복사한 값에만 의존하지 않게 했다.
+- EXPLAIN의 대표 scan은 `relationName=settlement_item`인 node로 고른다. `scanActualRows / returnedRows`를 함께 기록해 후반 OFFSET이 반환량보다 얼마나 많은 행을 통과시켰는지 비교한다.
+- GC 로그는 애플리케이션 부팅부터 종료까지의 JVM 전체 범위로 명시하고 컬럼에도 `process` 접두어를 붙였다. Step 구간 메모리는 50ms MXBean `peakOldGenBytes`만 사용해 두 측정 범위를 혼동하지 않는다.
+- 공식 EXPLAIN 36개가 모두 `settlement_item_pkey`를 선택했으므로 인덱스 ON/OFF Step 시간 차이를 보조 인덱스 사용 효과로 해석하지 않는다. READY가 선행 ID 구간에 몰린 seed 분포와 세 번의 반복, warm-cache 로컬 환경을 주요 한계로 공개한다.
+- 블로그의 결론은 실제 36개 run과 공식 EXPLAIN/GC에서 확인한 값만 사용한다. 3,001건 기능 검증 시간이나 측정하지 않은 누적 scan 수는 성능 근거로 인용하지 않는다.
