@@ -1,6 +1,6 @@
 # Batch Reader Benchmark Lab
 
-Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **2단계 Reader 구현과 정합성 검증까지 완료**되어 있으며 성능 측정 결과는 아직 없다.
+Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로컬 PostgreSQL로 비교하기 위한 재현 프로젝트다. 현재는 **3단계 벤치마크·JVM 측정 도구까지 완료**되어 있으며 전체 성능 실험은 아직 실행하지 않았다.
 
 ## 현재 구성
 
@@ -12,6 +12,8 @@ Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로
 - DB와 seed를 확인하는 최소 Spring Batch Job
 - 실제 `JpaPagingItemReader` OFFSET Reader와 restartable JPA Keyset Reader
 - 두 Reader가 공유하는 chunk size 1000, checksum Processor/Writer 계약
+- 파라미터 기반 단일 benchmark Job, wall-clock/건수/checksum/Old Gen 수집
+- 고정 512MB heap/G1GC 독립 JVM 실행 스크립트와 CSV/JSON 결과 저장
 - JUnit 5 단위 테스트와 Testcontainers PostgreSQL 통합 테스트
 
 ## 사전 조건
@@ -99,6 +101,27 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 
 스크립트는 100,000 / 500,000 / 1,000,000만 허용하도록 준비됐지만, **1단계에서는 전체 규모 seed와 성능 실험을 실행하지 않았다**.
 
+## 단일 benchmark run
+
+먼저 DB에 해당 scale seed를 준비하고 JAR를 빌드한다. 4단계가 끝나기 전까지 `indexMode`는 실행 메타데이터이며 실제 보조 인덱스 상태를 자동 변경하거나 검증하지 않는다.
+
+```powershell
+.\gradlew.bat bootJar
+.\scripts\seed-scale.ps1 -ReadyRows 100000
+.\scripts\run-benchmark.ps1 -ReaderType OFFSET -TargetRows 100000 -IndexMode OFF -Repetition 1
+```
+
+각 run은 `-XX:+UseG1GC -Xms512m -Xmx512m`을 사용한 별도 JVM에서 실행된다. 기본 50ms 간격으로 `G1 Old Gen`의 `MemoryPoolMXBean.getUsage().getUsed()`를 샘플링한다. 해당 pool이 없으면 peak를 0으로 대체하지 않고 `null`과 N/A 사유를 기록한다.
+
+생성 파일:
+
+- `results/runs/<run-id>.json`: run 전체 지표
+- `results/raw-runs.csv`: 재집계 가능한 원본 행
+- `results/summary.csv`: Reader/scale/index별 성공 run의 평균·최소·최대·표준편차와 Old Gen 요약
+- `results/gc/<run-id>.log`: JVM unified GC 원본 로그
+
+`targetRows`와 실제 read/write 수가 다르면 `countValid=false`로 기록되며 summary에서 제외된다. 전체 scale 증가 배율과 Reader 간 비율은 5단계 전체 matrix 결과가 존재할 때 계산한다.
+
 ## 현재 범위
 
-인덱스 전환, 벤치마크 지표 수집, EXPLAIN, GC/Old Gen 측정, 전체 36회 실험과 블로그 초안은 다음 단계 작업이다. 현재 테스트 시간은 Reader 성능 수치로 사용할 수 없다.
+인덱스 전환과 상태 검증, EXPLAIN, 전체 36회 실험과 블로그 초안은 다음 단계 작업이다. 현재 smoke 검증 시간은 Reader 성능 수치로 사용할 수 없다.

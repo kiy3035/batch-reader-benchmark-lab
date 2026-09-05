@@ -44,4 +44,14 @@ public class ChecksumItemWriter implements ItemStreamWriter<SettlementContributi
     public void close() throws ItemStreamException {
         // 저장할 전체 항목이나 닫을 외부 자원이 없다.
     }
+
+    /** 현재까지 정상 처리한 항목 수를 반환한다. */
+    public long getCount() {
+        return count;
+    }
+
+    /** 현재까지 누적한 checksum을 반환한다. */
+    public long getChecksum() {
+        return checksum;
+    }
 }
