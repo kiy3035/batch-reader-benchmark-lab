@@ -37,3 +37,12 @@ Flyway V3에 READY 4건과 COMPLETED 1건을 넣었다. ID `3` 등을 의도적�
 ## 로컬 설정
 
 Compose 기본 계정 값은 `.env.example`에 공개 가능한 로컬 예시로만 둔다. 실제 비밀값이나 외부 서비스는 사용하지 않는다. 데이터 volume은 Git에서 제외하며 OS page cache 초기화나 관리자 권한 작업은 수행하지 않는다.
+
+## 2단계 Reader와 체크포인트
+
+- OFFSET은 비교 대상 자체인 Spring Batch `JpaPagingItemReader`를 그대로 사용한다. JPQL은 상태 조건과 고유 ID 오름차순만 포함하며 pageSize와 saveState를 명시했다.
+- Keyset은 `ItemStreamReader`와 JPA page source를 분리했다. page source는 페이지마다 영속성 컨텍스트를 비우고 `id > :lastId ORDER BY id`에 `setMaxResults(1000)`을 적용한다.
+- Keyset의 `lastId`는 항목을 정상 반환할 때 갱신하고, Spring Batch가 chunk commit과 함께 호출하는 `update`에서 Step ExecutionContext에 기록한다. 실패한 chunk의 ExecutionContext 변경은 트랜잭션과 함께 롤백된다.
+- 두 Step은 단일 스레드이며 chunk/page size 1000과 같은 Entity, Processor, Writer 계약을 사용한다.
+
+checksum 기여값은 `id * 31 + 센트 단위 amount`다. Writer는 전체 ID나 Entity를 메모리에 보관하지 않고 count와 checksum만 유지한다. ID 순서와 중복 검사는 작은 자동 테스트 데이터에서만 목록을 수집한다.
