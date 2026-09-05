@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: batch-reader-benchmark-lab
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/batch_benchmark}
+    username: ${DB_USER:benchmark}
+    password: ${DB_PASSWORD:benchmark_local}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  batch:
+    jdbc:
+      initialize-schema: never
+    job:
+      name: smokeJob
+  flyway:
+    enabled: true
+logging:
+  level:
+    dev.benchmark: INFO
