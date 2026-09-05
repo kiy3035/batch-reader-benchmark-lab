@@ -66,3 +66,14 @@ checksum 기여값은 `id * 31 + 센트 단위 amount`다. Writer는 전체 ID�
 - 페이지 위치는 pageSize 1000 경계의 첫 페이지, 중앙 페이지, 마지막 페이지로 계산한다. OFFSET 직전 행의 실제 ID를 조회해 같은 위치의 Keyset `lastId`로 기록하므로 ID gap이 있어도 대응 관계가 유지된다.
 - SQL의 placeholder와 이름별 실제 바인딩, PostgreSQL 원본 `FORMAT JSON`을 함께 보존한다. 별도로 scan/node 유형, rows, loops, rows removed by filter, shared hit/read blocks, sort, planning/execution time을 평탄화해 후속 집계가 원본 JSON 파서에 종속되지 않게 했다.
 - 4단계 검증은 READY 3,001건의 소규모 합성 데이터로만 수행했다. 이때의 plan 선택과 시간은 기능 검증 근거이며 5단계 성능 결과로 사용하지 않는다.
+
+## 5단계 전체 측정 설계
+
+- scale마다 결정적 seed를 한 번 준비하고 그 snapshot을 12개 측정 run이 공유한다. Reader 실행 중에는 행을 변경하지 않으며 index DDL만 조건에 따라 전환한다.
+- 각 scale의 OFFSET/Keyset × index OFF/ON 네 조건을 한 번씩 warm-up한다. warm-up 결과는 `build/stage5-warmup/`에 분리해 공식 raw/summary에 포함하지 않는다.
+- 반복 1과 3은 OFFSET→KEYSET, 반복 2는 KEYSET→OFFSET 순서다. index 순서도 OFF→ON, ON→OFF, OFF→ON으로 교차하며 전체 순번을 run JSON, raw CSV와 `execution-order.csv`에 기록한다.
+- 모든 측정 run은 같은 Boot JAR를 사용하는 별도 JVM이다. G1GC, `-Xms512m -Xmx512m`, unified GC log와 50ms Old Gen sampling을 고정한다.
+- 기본 결과는 명시적 warm-up 뒤의 warm-cache 로컬 비교다. 관리자 권한이 필요한 OS page cache 초기화는 하지 않으며 cold-cache 결과라고 표현하지 않는다.
+- run 결과에는 나노초·밀리초·초, JVM 옵션, GC 로그와 scale/Reader/index별 EXPLAIN glob을 함께 기록한다. 성공, count/checksum, 인덱스 검증과 원본 파일 존재 여부를 자동 검사한다.
+- summary는 성공하고 count가 맞으며 인덱스 상태가 검증된 run만 사용한다. 평균·최소·최대·모표준편차와 Old Gen 평균/최대 외에 500k/100k, 1m/100k, 1m/500k 증가 배율과 같은 조건의 OFFSET/Keyset 평균 비율을 계산한다.
+- 환경 파일은 측정 전에 깨끗한 Git 커밋의 SHA와 OS, CPU, RAM, Java, Gradle, Spring, Hibernate, PostgreSQL, Docker 버전 및 자원 할당을 기록한다.

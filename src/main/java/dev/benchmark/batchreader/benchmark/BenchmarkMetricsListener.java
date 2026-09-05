@@ -49,12 +49,13 @@ public class BenchmarkMetricsListener implements StepExecutionListener {
         boolean indexVerified = jobContext.get(BenchmarkIndexPreparationListener.VERIFIED_KEY, Boolean.class);
         String indexDefinition = jobContext.getString(BenchmarkIndexPreparationListener.DEFINITION_KEY);
         BenchmarkRunResult result = new BenchmarkRunResult(
-                parameters.runId(), startedAt, Instant.now(), parameters.readerType(), parameters.targetRows(),
+                parameters.runId(), parameters.executionOrder(), startedAt, Instant.now(),
+                parameters.readerType(), parameters.targetRows(),
                 parameters.indexMode(), indexVerified, indexDefinition, parameters.repetition(),
-                durationNs, durationNs / 1_000_000.0,
+                durationNs, durationNs / 1_000_000.0, durationNs / 1_000_000_000.0,
                 stepExecution.getReadCount(), stepExecution.getWriteCount(), stepExecution.getCommitCount(),
                 writer.getChecksum(), exitStatus, peak, sampler.measurementStatus(),
-                parameters.gcLogPath(), countValid);
+                parameters.gcLogPath(), parameters.explainArtifactPath(), parameters.jvmOptions(), countValid);
         resultStore.save(result);
         if (!countValid) {
             stepExecution.setStatus(BatchStatus.FAILED);

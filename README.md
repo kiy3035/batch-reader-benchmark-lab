@@ -16,6 +16,7 @@ Spring Batch에서 `LIMIT/OFFSET` 페이징과 Keyset 페이징의 특성을 로
 - 고정 512MB heap/G1GC 독립 JVM 실행 스크립트와 CSV/JSON 결과 저장
 - `(status, id)` 보조 인덱스 ON/OFF, 카탈로그 검증과 `ANALYZE` 자동화
 - 앞·중간·마지막 페이지의 OFFSET/Keyset SQL, 바인딩과 EXPLAIN JSON 수집
+- warm-up 분리, 교차 실행 순서와 36개 run 검증을 포함한 전체 matrix 스크립트
 - JUnit 5 단위 테스트와 Testcontainers PostgreSQL 통합 테스트
 
 ## 사전 조건
@@ -118,8 +119,8 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 생성 파일:
 
 - `results/runs/<run-id>.json`: run 전체 지표
-- `results/raw-runs.csv`: 검증된 인덱스 상태를 포함한 재집계 가능한 원본 행
-- `results/summary.csv`: Reader/scale/index별 성공 run의 평균·최소·최대·표준편차와 Old Gen 요약
+- `results/raw-runs.csv`: 실행 순서, JVM 옵션, EXPLAIN 경로와 검증된 인덱스 상태를 포함한 원본 행
+- `results/summary.csv`: 평균·최소·최대·표준편차, 규모 증가 배율, Reader 비율과 Old Gen 요약
 - `results/gc/<run-id>.log`: JVM unified GC 원본 로그
 
 `targetRows`와 실제 read/write 수가 다르면 `countValid=false`로 기록되며 summary에서 제외된다. 전체 scale 증가 배율과 Reader 간 비율은 5단계 전체 matrix 결과가 존재할 때 계산한다.
@@ -155,6 +156,40 @@ Reader 정합성 통합 테스트만 실행할 수도 있다.
 
 EXPLAIN 실행시간은 Reader Step 시간과 별도 산출물에 기록하며 benchmark 평균에 포함하지 않는다.
 
+## 전체 benchmark matrix
+
+전체 측정은 결과 디렉터리가 비어 있는 상태에서 다음 명령으로 실행한다. 스크립트는 Compose PostgreSQL을 시작하고 동일 JAR로 100k, 500k, 1m을 순서대로 준비한다.
+
+```powershell
+.\scripts\run-full-matrix.ps1
+```
+
+각 scale에서 Reader/index 조합별 warm-up을 한 번 실행한 뒤 공식 결과와 분리된 `build/stage5-warmup/`에 저장한다. 측정 순서는 다음과 같다.
+
+- 반복 1: index OFF→ON, 각 모드에서 OFFSET→KEYSET
+- 반복 2: index ON→OFF, 각 모드에서 KEYSET→OFFSET
+- 반복 3: index OFF→ON, 각 모드에서 OFFSET→KEYSET
+
+각 측정은 별도 JVM이며 chunk/page size 1000, G1GC, 512MB 고정 heap과 50ms Old Gen sampler를 공유한다. OS page cache를 강제로 비우지 않으므로 결과는 명시적 warm-up 뒤의 로컬 warm-cache 비교다.
+
+중단 뒤 생성된 run을 확인하고 재개하려면 다음 명령을 사용한다. 완료되고 검증된 run만 건너뛴다.
+
+```powershell
+.\scripts\run-full-matrix.ps1 -Resume
+```
+
+전체 실행이 끝나면 `validate-results.ps1`이 36개 성공 run, 12개 요약 그룹, scale별 checksum 일치, 36개 GC 로그와 36개 EXPLAIN JSON을 확인한다. 독립 검증 명령은 다음과 같다.
+
+```powershell
+.\scripts\validate-results.ps1
+```
+
+추가 산출물:
+
+- `results/environment.json`: OS/CPU/RAM/JVM/프레임워크/PostgreSQL/Docker와 통제 변수
+- `results/execution-order.csv`: 36개 run의 실제 실행 순서
+- `results/validation.json`: 산출물 수, 실행 순서와 scale별 checksum 검증 결과
+
 ## 현재 범위
 
-다음 작업은 5단계의 100k/500k/1m 전체 36회 실험이다. 현재 3,001건 검증 시간과 실행계획은 기능 확인 자료이며 Reader 성능 수치로 사용할 수 없다. 블로그 초안은 실제 전체 측정이 끝난 뒤 6단계에서 작성한다.
+현재 3,001건 검증 시간과 실행계획은 기능 확인 자료이며 Reader 성능 수치로 사용할 수 없다. 블로그 초안은 실제 전체 측정이 끝난 뒤 6단계에서 작성한다.

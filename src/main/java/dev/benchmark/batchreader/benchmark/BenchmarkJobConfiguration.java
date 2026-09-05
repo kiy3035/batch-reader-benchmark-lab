@@ -99,15 +99,20 @@ public class BenchmarkJobConfiguration {
             @Qualifier("benchmarkWriter") ChecksumItemWriter writer,
             BenchmarkResultStore resultStore,
             @Value("#{jobParameters['runId']}") String runId,
+            @Value("#{jobParameters['executionOrder'] ?: 0}") Long executionOrder,
             @Value("#{jobParameters['readerType']}") String readerType,
             @Value("#{jobParameters['targetRows']}") Long targetRows,
             @Value("#{jobParameters['indexMode']}") String indexMode,
             @Value("#{jobParameters['repetition']}") Long repetition,
             @Value("#{jobParameters['gcLogPath'] ?: ''}") String gcLogPath,
+            @Value("#{jobParameters['explainArtifactPath'] ?: ''}") String explainArtifactPath,
+            @Value("#{jobParameters['jvmOptions'] ?: ''}") String jvmOptions,
             @Value("${benchmark.old-gen-sample-interval-ms:50}") long intervalMillis) {
-        BenchmarkRunResult parameters = new BenchmarkRunResult(runId, Instant.EPOCH, Instant.EPOCH,
+        BenchmarkRunResult parameters = new BenchmarkRunResult(runId, executionOrder.intValue(),
+                Instant.EPOCH, Instant.EPOCH,
                 ReaderType.valueOf(readerType), targetRows, IndexMode.valueOf(indexMode), false, "", repetition.intValue(),
-                0L, 0.0, 0L, 0L, 0L, 0L, "", null, "", gcLogPath, false);
+                0L, 0.0, 0.0, 0L, 0L, 0L, 0L, "", null, "", gcLogPath,
+                explainArtifactPath, jvmOptions, false);
         return new BenchmarkMetricsListener(parameters, writer, resultStore, intervalMillis);
     }
 }
